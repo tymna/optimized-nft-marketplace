@@ -16,6 +16,7 @@ contract MarketHandler is Test {
     uint256 public totalSales;
 
     mapping(uint24 => bool) public isListed;
+    mapping(uint24 => uint96) public listedPrice;
 
     constructor(OptimizedNFTMarket _market, MockNFT _nft, address _seller) {
         market = _market;
@@ -23,9 +24,9 @@ contract MarketHandler is Test {
         seller = _seller;
     }
 
-    function createListing(uint32 price, uint32 duration) external {
-        price = uint32(bound(price, 1, type(uint32).max));
-        duration = uint32(bound(duration, 1, type(uint32).max));
+    function createListing(uint96 price, uint32 duration) external {
+        price = uint96(bound(price, 1, type(uint96).max));
+        duration = uint32(bound(duration, 1, type(uint32).max - block.timestamp));
 
         uint24 tokenId = nextTokenId++;
         nft.mint(seller, tokenId);
@@ -36,6 +37,7 @@ contract MarketHandler is Test {
         market.createListing(tokenId, price, duration);
 
         isListed[tokenId] = true;
+        listedPrice[tokenId] = price;
         totalListings++;
     }
 
@@ -44,7 +46,7 @@ contract MarketHandler is Test {
         if (!isListed[tokenId]) return;
 
         address buyer = makeAddr(string.concat("buyer", vm.toString(tokenId)));
-        uint256 price = type(uint32).max;
+        uint256 price = listedPrice[tokenId];
         vm.deal(buyer, price);
 
         vm.prank(buyer);

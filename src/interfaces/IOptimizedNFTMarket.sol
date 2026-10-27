@@ -11,7 +11,7 @@ interface IOptimizedNFTMarket {
     }
 
     // listing+buy
-    function createListing(uint24 tokenId, uint32 price, uint32 duration) external;
+    function createListing(uint24 tokenId, uint96 price, uint32 duration) external;
     function cancelListing(uint24 tokenId) external;
     function buyNow(uint24 tokenId) external payable;
 
@@ -19,7 +19,7 @@ interface IOptimizedNFTMarket {
     function acceptBid(BidOrder calldata order, bytes calldata signature) external;
 
     // batch operations
-    function batchList(uint24[] calldata tokenIds, uint32[] calldata prices, uint32 duration) external;
+    function batchList(uint24[] calldata tokenIds, uint96[] calldata prices, uint32 duration) external;
     function batchCancel(uint24[] calldata tokenIds) external;
     function batchBuy(uint24[] calldata tokenIds) external payable;
 

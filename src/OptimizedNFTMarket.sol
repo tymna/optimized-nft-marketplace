@@ -58,7 +58,7 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
     }
 
     /* ───── Listing ───── */
-    function createListing(uint24 tokenId, uint32 price, uint32 duration)
+    function createListing(uint24 tokenId, uint96 price, uint32 duration)
         external
         onlyTokenOwner(tokenId)
         onlyApprovedToken(tokenId)
@@ -67,17 +67,14 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
 
         assembly {
             // 1. block only if listing is ACTIVE and not expired
-            let existing := sload(listingSlot)
-            if existing {
-                let status := and(shr(24, existing), 0xff)
-                // FINISHED or CANCELED -> allow overwrite
-                if iszero(status) {
-                    // status is ACTIVE — check expiry
-                    let expiry := and(shr(32, existing), 0xffffffff)
-                    if gt(expiry, timestamp()) {
-                        mstore(0x00, 0xa3d582ec) // "AlreadyListed()"
-                        revert(0x1c, 0x04)
-                    }
+            // (never listed -> meta is 0 -> status ACTIVE with expiry 0, passes)
+            let meta := sload(add(listingSlot, 1))
+            // FINISHED or CANCELED -> allow overwrite
+            if iszero(and(shr(32, meta), 0xff)) {
+                // status is ACTIVE — check expiry
+                if gt(and(meta, 0xffffffff), timestamp()) {
+                    mstore(0x00, 0xa3d582ec) // "AlreadyListed()"
+                    revert(0x1c, 0x04)
                 }
             }
 
@@ -93,42 +90,46 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
                 revert(0x1c, 0x04)
             }
 
-            // prepare data
-            //  [  tokenId  ][ status ][   expiry   ][   price    ][                seller                ]
-            //  [  24 bits  ][ 8 bits ][  32 bits   ][  32 bits   ][               160 bits               ]
-
             let expiry := add(timestamp(), duration)
-            let packed := or(shl(96, caller()), or(shl(64, price), or(shl(32, expiry), or(shl(24, 0), tokenId))))
-            // update mapping with listing data (packed)
-            sstore(listingSlot, packed)
+            if gt(expiry, 0xffffffff) {
+                mstore(0x00, 0x76166401) // "InvalidDuration()"
+                revert(0x1c, 0x04)
+            }
+
+            // prepare data (same layout as Types.Listing)
+            //  slot 0: [   price    ][                seller                ]
+            //          [  96 bits   ][               160 bits               ]
+            //  slot 1: [  tokenId  ][ status ][   expiry   ]
+            //          [  24 bits  ][ 8 bits ][  32 bits   ]
+            sstore(listingSlot, or(shl(160, price), caller()))
+            sstore(add(listingSlot, 1), or(shl(40, tokenId), expiry)) // status ACTIVE (0)
 
             let ptr := mload(0x40)
             mstore(ptr, price)
             mstore(add(ptr, 0x20), expiry)
-            log3(ptr, 0x40, 0x537e00a4f0434e6d8a8e3515113edc354084342a11d999d7f5dba4c85a744364, tokenId, caller()) // ListingCreated(uint24,address,uint32,uint32)
+            log3(ptr, 0x40, 0x049ef03df4e85030cf87ef53cc98b5295e0bd711becfd35c0c708f6a91fcfa8c, tokenId, caller()) // ListingCreated(uint24,address,uint96,uint32)
         }
     }
 
     function cancelListing(uint24 tokenId) external onlyTokenOwner(tokenId) {
         bytes32 listingSlot = _getListingSlot(tokenId);
         assembly {
-            let existing := sload(listingSlot)
+            let meta := sload(add(listingSlot, 1))
 
-            if iszero(existing) {
+            if iszero(meta) {
                 mstore(0x00, 0x665c1c57) // "NotListed()"
                 revert(0x1c, 0x04)
             }
 
-            let status := and(shr(24, existing), 0xff)
+            let status := and(shr(32, meta), 0xff)
             // must be ACTIVE (0) to cancel
             if status {
                 mstore(0x00, 0x665c1c57) // "NotListed()" — already FINISHED or CANCELED
                 revert(0x1c, 0x04)
             }
 
-            // set status to CANCELED (2), keep rest of packed data
-            let cleared := and(existing, not(shl(24, 0xff)))
-            sstore(listingSlot, or(cleared, shl(24, 2)))
+            // set status to CANCELED (2), status bits are 0 here
+            sstore(add(listingSlot, 1), or(meta, shl(32, 2)))
             log3(0x00, 0x00, 0xa7855ec39fe137e37a21233651cb88e7ce7553e3edb3ab6a9b8b1a68eb63dbb3, tokenId, caller()) // ListingCanceled(uint24,address)
         }
     }
@@ -146,35 +147,33 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
             }
             sstore(s_reentrancyLock.slot, 2)
 
-            let existing := sload(listingSlot)
+            let meta := sload(add(listingSlot, 1))
 
-            if iszero(existing) {
+            if iszero(meta) {
                 mstore(0x00, 0x665c1c57) // "NotListed()"
                 revert(0x1c, 0x04)
             }
 
-            let status := and(shr(24, existing), 0xff)
-            if status {
+            if and(shr(32, meta), 0xff) {
                 mstore(0x00, 0x665c1c57) // "NotListed()" — already FINISHED or CANCELED
                 revert(0x1c, 0x04)
             }
 
-            let expiry := and(shr(32, existing), 0xffffffff)
-            if lt(expiry, timestamp()) {
+            if lt(and(meta, 0xffffffff), timestamp()) {
                 mstore(0x00, 0x398cfd02) // "ListingExpired()"
                 revert(0x1c, 0x04)
             }
 
-            let price := and(shr(64, existing), 0xffffffff)
-            let seller := shr(96, existing)
+            let existing := sload(listingSlot)
+            let price := shr(160, existing)
+            let seller := and(existing, 0xffffffffffffffffffffffffffffffffffffffff)
 
             if iszero(eq(callvalue(), price)) {
                 mstore(0x00, 0xcd1c8867) // "InsufficientPayment()"
                 revert(0x1c, 0x04)
             }
 
-            let cleared := and(existing, not(shl(24, 0xff)))
-            sstore(listingSlot, or(cleared, shl(24, 1))) // change the status
+            sstore(add(listingSlot, 1), or(meta, shl(32, 1))) // change the status to FINISHED
 
             // compute fee and store BEFORE external calls (CEI)
             let feeRate := sload(s_feeRate.slot)
@@ -262,17 +261,17 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
             let listingSlot := keccak256(0x00, 0x40)
 
             // --- listing validation ---
-            let existing := sload(listingSlot)
+            let meta := sload(add(listingSlot, 1))
 
-            if iszero(existing) {
+            if iszero(meta) {
                 mstore(0x00, 0x665c1c57) // NotListed()
                 revert(0x1c, 0x04)
             }
-            if and(shr(24, existing), 0xff) {
+            if and(shr(32, meta), 0xff) {
                 mstore(0x00, 0x665c1c57) // NotListed() — already FINISHED or CANCELED
                 revert(0x1c, 0x04)
             }
-            if lt(and(shr(32, existing), 0xffffffff), timestamp()) {
+            if lt(and(meta, 0xffffffff), timestamp()) {
                 mstore(0x00, 0x398cfd02) // ListingExpired()
                 revert(0x1c, 0x04)
             }
@@ -297,7 +296,7 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
 
             // --- signature validation & ecrecover ---
             if iszero(eq(signature.length, 65)) {
-                mstore(0x00, 0x12345678) // InvalidSignatureLength()
+                mstore(0x00, 0x4be6321b) // InvalidSignatureLength()
                 revert(0x1c, 0x04)
             }
 
@@ -308,23 +307,29 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
                 mstore(add(ptr, 0x60), calldataload(add(signature.offset, 0x20))) // s
             }
 
+            // reject high-s (malleable) signatures: s must be <= secp256k1n / 2
+            if gt(mload(add(ptr, 0x60)), 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0) {
+                mstore(0x00, 0x8baa579f) // InvalidSignature()
+                revert(0x1c, 0x04)
+            }
+
             if iszero(staticcall(gas(), 0x01, ptr, 0x80, ptr, 0x20)) {
                 revert(0, 0)
             }
 
             if iszero(mload(ptr)) {
-                mstore(0x00, 0x20c13b0b) // InvalidSignature()
+                mstore(0x00, 0x8baa579f) // InvalidSignature()
                 revert(0x1c, 0x04)
             }
 
             // verify signer == bidder
             if iszero(eq(mload(ptr), calldataload(order))) {
-                mstore(0x00, 0x20c13b0b) // InvalidSignature()
+                mstore(0x00, 0x8baa579f) // InvalidSignature()
                 revert(0x1c, 0x04)
             }
 
             // replay protection — digest still at 0x00 (revert paths above don't fall through)
-            mstore(0x20, 1)
+            mstore(0x20, s_usedOrders.slot)
             let orderSlot := keccak256(0x00, 0x40)
             if sload(orderSlot) {
                 mstore(0x00, 0x88b39043) // OrderAlreadyUsed()
@@ -332,10 +337,10 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
             }
             sstore(orderSlot, 1)
 
-            let seller := shr(96, existing)
+            let seller := and(sload(listingSlot), 0xffffffffffffffffffffffffffffffffffffffff)
 
             // update listing status to FINISHED (1)
-            sstore(listingSlot, or(and(existing, not(shl(24, 0xff))), shl(24, 1)))
+            sstore(add(listingSlot, 1), or(meta, shl(32, 1)))
 
             // --- transfer NFT ---
             mstore(ptr, shl(224, 0x23b872dd)) // selector
@@ -371,7 +376,7 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
 
     /* ───── BATCH OPERATIONS ───── */
     // bound max batch size
-    function batchList(uint24[] calldata tokenIds, uint32[] calldata prices, uint32 duration) external {
+    function batchList(uint24[] calldata tokenIds, uint96[] calldata prices, uint32 duration) external {
         address nftContract = i_nftContract;
 
         assembly {
@@ -382,7 +387,7 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
 
             if or(gt(tokenIds.length, MAX_BATCH), lt(tokenIds.length, 2)) {
                 switch gt(tokenIds.length, MAX_BATCH)
-                case 1 { mstore(0x00, 0xc06666b8) } // BatchToBig()
+                case 1 { mstore(0x00, 0xd0a7c351) } // BatchTooBig()
                 default { mstore(0x00, 0x7103b805) } // BatchTooSmall()
                 revert(0x1c, 0x04)
             }
@@ -395,10 +400,14 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
             let len := tokenIds.length
 
             let expiry := add(timestamp(), duration)
+            if gt(expiry, 0xffffffff) {
+                mstore(0x00, 0x76166401) // "InvalidDuration()"
+                revert(0x1c, 0x04)
+            }
 
             for { let i := 0 } lt(i, len) { i := add(i, 1) } {
                 let tokenId := and(calldataload(add(tokenIds.offset, mul(i, 0x20))), 0xffffff)
-                let price := and(calldataload(add(prices.offset, mul(i, 0x20))), 0xffffffff)
+                let price := and(calldataload(add(prices.offset, mul(i, 0x20))), 0xffffffffffffffffffffffff)
 
                 // ── ownerOf(tokenId) → must == caller ──
                 mstore(0x00, shl(224, 0x6352211e))
@@ -443,29 +452,23 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
                 let listingSlot := keccak256(0x00, 0x40)
 
                 // ── block if ACTIVE and not expired ──
-                let existing := sload(listingSlot)
-                if existing {
-                    let status := and(shr(24, existing), 0xff)
-                    if iszero(status) {
-                        let existingExpiry := and(shr(32, existing), 0xffffffff)
-                        if gt(existingExpiry, timestamp()) {
-                            mstore(0x00, 0xa3d582ec) // AlreadyListed()
-                            revert(0x1c, 0x04)
-                        }
+                let meta := sload(add(listingSlot, 1))
+                if iszero(and(shr(32, meta), 0xff)) {
+                    if gt(and(meta, 0xffffffff), timestamp()) {
+                        mstore(0x00, 0xa3d582ec) // AlreadyListed()
+                        revert(0x1c, 0x04)
                     }
                 }
 
-                // ── pack and store ──
-                //  [  tokenId  ][ status ][   expiry   ][   price    ][                seller                ]
-                //  [  24 bits  ][ 8 bits ][  32 bits   ][  32 bits   ][               160 bits               ]
-                let packed := or(shl(96, caller()), or(shl(64, price), or(shl(32, expiry), tokenId)))
-                sstore(listingSlot, packed)
+                // ── pack and store (layout as in createListing) ──
+                sstore(listingSlot, or(shl(160, price), caller()))
+                sstore(add(listingSlot, 1), or(shl(40, tokenId), expiry))
 
-                // ── emit ListingCreated(uint24 indexed tokenId, address indexed seller, uint32 price, uint32 expiry) ──
+                // ── emit ListingCreated(uint24 indexed tokenId, address indexed seller, uint96 price, uint32 expiry) ──
                 let ptr := mload(0x40)
                 mstore(ptr, price)
                 mstore(add(ptr, 0x20), expiry)
-                log3(ptr, 0x40, 0x537e00a4f0434e6d8a8e3515113edc354084342a11d999d7f5dba4c85a744364, tokenId, caller())
+                log3(ptr, 0x40, 0x049ef03df4e85030cf87ef53cc98b5295e0bd711becfd35c0c708f6a91fcfa8c, tokenId, caller())
             }
         }
     }
@@ -476,7 +479,7 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
         assembly {
             if or(gt(tokenIds.length, MAX_BATCH), lt(tokenIds.length, 2)) {
                 switch gt(tokenIds.length, MAX_BATCH)
-                case 1 { mstore(0x00, 0xc06666b8) } // BatchToBig()
+                case 1 { mstore(0x00, 0xd0a7c351) } // BatchTooBig()
                 default { mstore(0x00, 0x7103b805) } // BatchTooSmall()
                 revert(0x1c, 0x04)
             }
@@ -503,22 +506,20 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
                 let listingSlot := keccak256(0x00, 0x40)
 
                 // ── validate: must exist and be ACTIVE ──
-                let existing := sload(listingSlot)
+                let meta := sload(add(listingSlot, 1))
 
-                if iszero(existing) {
+                if iszero(meta) {
                     mstore(0x00, 0x665c1c57) // NotListed()
                     revert(0x1c, 0x04)
                 }
 
-                let status := and(shr(24, existing), 0xff)
-                if status {
+                if and(shr(32, meta), 0xff) {
                     mstore(0x00, 0x665c1c57) // NotListed() — already FINISHED or CANCELED
                     revert(0x1c, 0x04)
                 }
 
-                // ── set status to CANCELED (2), keep rest ──
-                let cleared := and(existing, not(shl(24, 0xff)))
-                sstore(listingSlot, or(cleared, shl(24, 2)))
+                // ── set status to CANCELED (2), status bits are 0 here ──
+                sstore(add(listingSlot, 1), or(meta, shl(32, 2)))
 
                 // ── emit ListingCanceled(uint24 indexed tokenId, address indexed seller) ──
                 log3(0x00, 0x00, 0xa7855ec39fe137e37a21233651cb88e7ce7553e3edb3ab6a9b8b1a68eb63dbb3, tokenId, caller())
@@ -539,7 +540,7 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
 
             if or(gt(tokenIds.length, MAX_BATCH), lt(tokenIds.length, 2)) {
                 switch gt(tokenIds.length, MAX_BATCH)
-                case 1 { mstore(0x00, 0xc06666b8) } // BatchToBig()
+                case 1 { mstore(0x00, 0xd0a7c351) } // BatchTooBig()
                 default { mstore(0x00, 0x7103b805) } // BatchTooSmall()
                 revert(0x1c, 0x04)
             }
@@ -559,29 +560,30 @@ contract OptimizedNFTMarket is IOptimizedNFTMarket, RoleManager {
                     mstore(0x00, tokenId)
                     mstore(0x20, s_listings.slot)
                     let listingSlot := keccak256(0x00, 0x40)
-                    let existing := sload(listingSlot)
+                    let meta := sload(add(listingSlot, 1))
 
-                    if iszero(existing) {
+                    if iszero(meta) {
                         mstore(0x00, 0x665c1c57) // NotListed()
                         revert(0x1c, 0x04)
                     }
                     // status != ACTIVE
-                    if and(shr(24, existing), 0xff) {
+                    if and(shr(32, meta), 0xff) {
                         mstore(0x00, 0x665c1c57) // NotListed() — FINISHED or CANCELED
                         revert(0x1c, 0x04)
                     }
                     // expired
-                    if lt(and(shr(32, existing), 0xffffffff), timestamp()) {
+                    if lt(and(meta, 0xffffffff), timestamp()) {
                         mstore(0x00, 0x398cfd02) // ListingExpired()
                         revert(0x1c, 0x04)
                     }
 
-                    price := and(shr(64, existing), 0xffffffff)
-                    seller := shr(96, existing)
+                    let existing := sload(listingSlot)
+                    price := shr(160, existing)
+                    seller := and(existing, 0xffffffffffffffffffffffffffffffffffffffff)
                     totalSpent := add(totalSpent, price)
 
                     // set status to FINISHED (1) before external calls (CEI)
-                    sstore(listingSlot, or(and(existing, not(shl(24, 0xff))), shl(24, 1)))
+                    sstore(add(listingSlot, 1), or(meta, shl(32, 1)))
                 }
 
                 // compute fee and store BEFORE external calls (CEI)

@@ -112,9 +112,13 @@ abstract contract MarketSetup is Test {
         _mintAndApprove(user, 3);
 
         uint24[] memory ids = new uint24[](3);
-        ids[0] = 1; ids[1] = 2; ids[2] = 3;
-        uint32[] memory prices = new uint32[](3);
-        prices[0] = 100; prices[1] = 200; prices[2] = 300;
+        ids[0] = 1;
+        ids[1] = 2;
+        ids[2] = 3;
+        uint96[] memory prices = new uint96[](3);
+        prices[0] = 100;
+        prices[1] = 200;
+        prices[2] = 300;
 
         vm.prank(user);
         market.batchList(ids, prices, 3600);

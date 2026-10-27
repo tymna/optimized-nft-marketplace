@@ -8,7 +8,7 @@ import {IERC721} from "./interfaces/IERC721.sol";
 contract SolidityNFTMarket {
     struct Listing {
         address seller;
-        uint32 price;
+        uint96 price;
         uint32 expiry;
         uint8 status;
         uint24 tokenId;
@@ -52,7 +52,7 @@ contract SolidityNFTMarket {
     error HasNoRole();
 
     // events
-    event ListingCreated(uint24 indexed tokenId, address indexed seller, uint32 price, uint32 expiry);
+    event ListingCreated(uint24 indexed tokenId, address indexed seller, uint96 price, uint32 expiry);
     event ListingCanceled(uint24 indexed tokenId, address indexed seller);
     event Sale(uint24 indexed tokenId, address indexed seller, address indexed buyer, uint256 price, uint256 fee);
     event FeeRateChanged(address indexed owner, uint256 oldRate, uint256 newRate);
@@ -129,7 +129,7 @@ contract SolidityNFTMarket {
 
     // --- listing ---
 
-    function createListing(uint24 tokenId, uint32 price, uint32 duration)
+    function createListing(uint24 tokenId, uint96 price, uint32 duration)
         external
         onlyTokenOwner(tokenId)
         onlyApprovedToken(tokenId)
@@ -228,6 +228,11 @@ contract SolidityNFTMarket {
                 v := byte(0, calldataload(add(signature.offset, 0x40)))
             }
 
+            // reject high-s (malleable) signatures
+            if (uint256(s) > 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0) {
+                revert InvalidSignature();
+            }
+
             address signer = ecrecover(digest, v, r, s);
             if (signer == address(0)) revert InvalidSignature();
             if (signer != order.bidder) revert InvalidSignature();
@@ -246,7 +251,7 @@ contract SolidityNFTMarket {
 
     // --- batch ---
 
-    function batchList(uint24[] calldata tokenIds, uint32[] calldata prices, uint32 duration) external {
+    function batchList(uint24[] calldata tokenIds, uint96[] calldata prices, uint32 duration) external {
         if (duration == 0) revert InvalidDuration();
         if (tokenIds.length > MAX_BATCH) revert BatchTooBig();
         if (tokenIds.length < 2) revert BatchTooSmall();
@@ -256,7 +261,7 @@ contract SolidityNFTMarket {
 
         for (uint256 i; i < tokenIds.length; ++i) {
             uint24 tokenId = tokenIds[i];
-            uint32 price = prices[i];
+            uint96 price = prices[i];
 
             if (IERC721(i_nftContract).ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
             if (

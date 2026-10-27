@@ -137,9 +137,13 @@ contract GasComparisonTest is Test {
         _setupTokens(nftSol, address(sol), 3);
 
         uint24[] memory ids = new uint24[](3);
-        ids[0] = 1; ids[1] = 2; ids[2] = 3;
-        uint32[] memory prices = new uint32[](3);
-        prices[0] = 100; prices[1] = 200; prices[2] = 300;
+        ids[0] = 1;
+        ids[1] = 2;
+        ids[2] = 3;
+        uint96[] memory prices = new uint96[](3);
+        prices[0] = 100;
+        prices[1] = 200;
+        prices[2] = 300;
 
         vm.prank(user);
         uint256 g1 = gasleft();
@@ -161,9 +165,13 @@ contract GasComparisonTest is Test {
         _setupTokens(nftSol, address(sol), 3);
 
         uint24[] memory ids = new uint24[](3);
-        ids[0] = 1; ids[1] = 2; ids[2] = 3;
-        uint32[] memory prices = new uint32[](3);
-        prices[0] = 100; prices[1] = 200; prices[2] = 300;
+        ids[0] = 1;
+        ids[1] = 2;
+        ids[2] = 3;
+        uint96[] memory prices = new uint96[](3);
+        prices[0] = 100;
+        prices[1] = 200;
+        prices[2] = 300;
 
         vm.prank(user);
         asm.batchList(ids, prices, 3600);
@@ -195,7 +203,7 @@ contract GasComparisonTest is Test {
         _setupTokens(nftSol, address(sol), 10);
 
         uint24[] memory ids = new uint24[](10);
-        uint32[] memory prices = new uint32[](10);
+        uint96[] memory prices = new uint96[](10);
         for (uint24 i; i < 10; i++) {
             ids[i] = i + 1;
             prices[i] = (i + 1) * 100;
@@ -221,7 +229,7 @@ contract GasComparisonTest is Test {
         _setupTokens(nftSol, address(sol), 10);
 
         uint24[] memory ids = new uint24[](10);
-        uint32[] memory prices = new uint32[](10);
+        uint96[] memory prices = new uint96[](10);
         uint256 total;
         for (uint24 i; i < 10; i++) {
             ids[i] = i + 1;
@@ -309,6 +317,8 @@ contract GasComparisonTest is Test {
         console.log("  assembly:", asmGas);
         console.log("  solidity:", solGas);
         console.log("  diff    :", absSavings);
-        console.log("  savings :", pct > 0 ? string.concat(vm.toString(pct), "%") : string.concat("-", vm.toString(-pct), "%"));
+        console.log(
+            "  savings :", pct > 0 ? string.concat(vm.toString(pct), "%") : string.concat("-", vm.toString(-pct), "%")
+        );
     }
 }

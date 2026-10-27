@@ -4,9 +4,10 @@ pragma solidity 0.8.24;
 import {MarketSetup} from "./helpers/Setup.sol";
 
 contract OptimizedNFTMarketFuzzTest is MarketSetup {
-    function testFuzz_onlyOwnerCanList(address caller, uint24 tokenId, uint32 price, uint32 duration) public {
+    function testFuzz_onlyOwnerCanList(address caller, uint24 tokenId, uint96 price, uint32 duration) public {
         vm.assume(caller != address(0));
-        vm.assume(price > 0 && duration > 0);
+        vm.assume(price > 0);
+        duration = uint32(bound(duration, 1, type(uint32).max - block.timestamp));
         vm.assume(tokenId > 1);
 
         nft.mint(user, tokenId);
@@ -23,8 +24,9 @@ contract OptimizedNFTMarketFuzzTest is MarketSetup {
         }
     }
 
-    function testFuzz_marketMustBeApproved(uint24 tokenId, uint32 price, uint32 duration, bool approved) public {
-        vm.assume(price > 0 && duration > 0);
+    function testFuzz_marketMustBeApproved(uint24 tokenId, uint96 price, uint32 duration, bool approved) public {
+        vm.assume(price > 0);
+        duration = uint32(bound(duration, 1, type(uint32).max - block.timestamp));
         vm.assume(tokenId > 1);
 
         nft.mint(user, tokenId);
@@ -42,9 +44,9 @@ contract OptimizedNFTMarketFuzzTest is MarketSetup {
         }
     }
 
-    function testFuzz_buyNow_paymentMustMatchPrice(uint32 price, uint256 sent) public {
+    function testFuzz_buyNow_paymentMustMatchPrice(uint96 price, uint256 sent) public {
         vm.assume(price > 0);
-        sent = bound(sent, 0, type(uint32).max);
+        sent = bound(sent, 0, type(uint96).max);
         vm.assume(sent != price);
 
         vm.prank(user);
@@ -75,8 +77,9 @@ contract OptimizedNFTMarketFuzzTest is MarketSetup {
         market.buyNow{value: 100}(1);
     }
 
-    function testFuzz_cancelListing_onlyActive(uint32 price, uint32 duration) public {
-        vm.assume(price > 0 && duration > 0);
+    function testFuzz_cancelListing_onlyActive(uint96 price, uint32 duration) public {
+        vm.assume(price > 0);
+        duration = uint32(bound(duration, 1, type(uint32).max - block.timestamp));
 
         vm.startPrank(user);
         market.createListing(1, price, duration);

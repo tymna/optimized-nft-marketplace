@@ -203,7 +203,9 @@ contract OptimizedNFTMarketIntegrationTest is MarketSetup {
         vm.deal(buyer, 600);
 
         uint24[] memory ids = new uint24[](3);
-        ids[0] = 1; ids[1] = 2; ids[2] = 3;
+        ids[0] = 1;
+        ids[1] = 2;
+        ids[2] = 3;
 
         vm.prank(buyer);
         market.batchBuy{value: 600}(ids);
